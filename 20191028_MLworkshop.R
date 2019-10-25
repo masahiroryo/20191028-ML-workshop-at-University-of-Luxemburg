@@ -1,3 +1,12 @@
+#####################################################################
+#
+#  Machine Learning workshop: overview and tree-based algorithms with mlr
+#
+#  Masahiro Ryo @Freie Universitaet Berlin
+#  2019-10-28
+#
+#####################################################################
+
 ## ----setwd---------------------------------------------------------------
 setwd("../R")
 
@@ -37,8 +46,8 @@ ps = makeParamSet(
 )
 
 ## ----finetuning_hyperparameters_resol, results="hide", warning=FALSE, message=FALSE----
-ctrl = makeTuneControlGrid(resolution = 3)
-rdesc = makeResampleDesc("CV", iters = 2)
+ctrl = makeTuneControlGrid(resolution = 10)
+rdesc = makeResampleDesc("CV", iters = 5)
 tune.cforest = tuneParams(regr.lrn, task = regr.task, resampling = rdesc, par.set = ps, control = ctrl)
 
 ## ----finetuning_hyperparameters_plot-------------------------------------
