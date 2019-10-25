@@ -1,0 +1,314 @@
+---
+title: "Machine Learning workshop: overview and tree-based algorithms with mlr"
+author: "Masahiro Ryo @Freie Universitaet Berlin"
+date: "2019-10-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+-------------------------------------------  
+
+## Introduction
+This material is made for the **Machine Learning workshop at University of Luxemburg**.  
+<br />
+**Goal?**  
+Through this workshop, *we will be able to learn a practical overview of ML modeling workflow and some of the basic skills to get started.*  
+<br />
+
+**Main package?**  
+We use [**mlr** package](https://mlr.mlr-org.com/index.html). mlr is a wrapper of various available ML algorithms in R (about 150 algorithms); in other words, it is an integrative ML platform. This package solves the issue that each ML package has a slightly different grammar from each other, and it allows users to use a single, simple, & unified way of writing. The tutorial of mlr is also greatly well written and comprehensive from basics to advanced.  
+<br />
+
+**Is it enough to know only mlr for studies?**  
+I would say "NO". mlr is practically useful to know what can be done with ML algorithms, to compare several algorithms, to make a prediction from a trained model. Yet, there are so many attractive functions which are not covered by mlr (esp. for visualization or interpretation).  
+Nevertheless, when we go deeper, mlr will not satisfy you. So, we need to use some particular packages such as *party*, which is one of my favorite ML packages (and is run by one of the most active group improving random forest algorithms).  
+<br /> 
+**mlr vs caret?**  
+You may know another similar wrapper package: caret. How do they differ? Practically, they differ a bit, but conceptually and practically they are really good alternatives. caret appeared several years earlier, so it has gained far more popularity. There is a super nice summary of the comparison, [see this blog by Phillip Probst](http://philipppro.github.io/2018-11-9-mlr_vs_caret/).  
+<br />
+
+
+
+-------------------------------------------  
+
+<br />
+<br />
+
+-------------------------------------------  
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=12, fig.height=8, fig.path='Figs/')
+```
+
+## 1. Settings
+
+#####1.1. Set the working directory appropriately.
+```{r setwd}
+setwd("C:/Users/masah/Dropbox/i_share/Event & conference/20191028_ML workshop at Luxemburg/workshop/R")
+getwd()
+```
+<br />
+
+#####1.2. We use a set of R packages.  
+The packages are automatically installed if needed. Confirm all listed values are TRUE (not FALSE). 
+```{r packages, results="hide", warning=FALSE, message=FALSE}
+#package.list = c("party", "mlr","parallelMap", "rpart", "rpart.plot","mmpf", "ggplot2")
+package.list = c("party", "mlr", "rpart", "rpart.plot")
+tmp.install = which(lapply(package.list, require, character.only = TRUE)==FALSE)
+if(length(tmp.install)>0) install.packages(package.list[tmp.install], repos = "http://cran.us.r-project.org")
+lapply(package.list, require, character.only = TRUE)
+```
+<br />
+
+#####1.3. Let's read the example dataset.  
+It contains a response variable (y1) and 16 explanatory variables (x1-x16).
+```{r read_df}
+df = data.frame(read.csv("data_example.csv"))
+head(df, 5)
+```
+<br />
+-------------------------------------------  
+## 2. Overview of ML workflow
+#### In this seciton, we learn what can be typically done using a ML.  
+    
++ Defining a task, selecting an algorithm, and training it to build a model (regression)  
++ Assessing the built model performance  
++ Fine-tuning the model  
++ Interpreting the results (variable importance and partial dependence plots)  
+
+-----  
+
+#### 2.1. Defining a task, selecting an algorithm, and training it to build a model (case study: regression)
+
+##### 2.1.1. Dataset: training and testing  
+First of all, let's split the dataset into two subsets.  
+One portion is used for traning an algorithm, and the other is used for evaluating the built model performance. Note that there are several ways to conduct performance assessment (e.g. k-fold cross validation, out-of-bag). There are some preset functions in mlr. We use 90% of the samples for training, and the rest is used for performance assessment.
+```{r data_train_test}
+train.set = sample(1:nrow(df), size = nrow(df)*0.9, replace = F)
+test.set  = setdiff(1:nrow(df),train.set)
+```
+<br />  
+
+##### 2.1.2. Task, Learner, Train & Predict  
+
+As a typical workflow, we do the followings:  
+
+1) Setting up a task (i.e. what to do?)  
+2) Specifying an algorithm (i.e. which tool to use?)  
+3) Traning the algorithm with the task (i.e. model building)  
+4) Assessing model performance (i.e. how well the algorithm learned from the data?)
+
+
+```{r task_learner_train}
+regr.task = makeRegrTask(data = df, target = "y1")
+regr.lrn = makeLearner("regr.cforest")
+regr.mod = train(regr.lrn, regr.task, subset = train.set)
+regr.mod
+task.pred = predict(regr.mod, task = regr.task, subset = test.set)
+performance(task.pred, measures=list(mse, rsq))
+plot(as.data.frame(task.pred)[,c("truth","response")])
+```
+Note that we use the *conditional infrerence forest (cforest)* algorithm here, but anything else can be used. There are several measures to evaluate model performance. Here, we checked Mean Squared Error (mse) and R-squared (rsq), but what to report depends on discpiline. See: 
+```{r get_performancemeasures}
+listMeasures(regr.task)
+```
+<br />
+<br />
+
+------  
+
+#### 2.2. Fine-tuning the model  
+
+Many algorithms have so-called **"hyperparameters"**, which are NOT estimated from the data (unlike the parameters of a statistical model). A user needs to pre-set these values, and they influence on model performance.  
+
+Here, we see the list of hyperparameters of *cforest* algorithm that can be manually changed:
+```{r get_hyperparameters}
+getParamSet(regr.lrn)
+```
+<br />
+That's a lot!! Yet, in the case of random forest algorithms, typically, the most influential hyperparameters are the number of tree models (**ntree**) and the number of random sampling from the set of the predictors (**mtry**).  
+For regression, **mtry** is often set to the square root of the number of predictors for empirical reasons.  
+<br />
+We attempt to find a combination of these hyperparameters which produce the best performance.  
+In the following, the function *makeParamSet* prepares several different parameter combinations of ntree and mtry. As they are both integer, we use *makeIntegerParam*. Both upper and lower boundaries are set.
+```{r finetuning_hyperparameters1}
+ps = makeParamSet(
+  makeIntegerParam("ntree", lower = 1, upper = 100),
+  makeIntegerParam("mtry", lower =  1, upper = 10)
+)
+```
+Then, we set the resolution of the search (interval of parameter value, how many times cross validation is conducted). Resolution and iterations should be ideally large enough, but it they are too large, it takes too much time.
+```{r finetuning_hyperparameters_resol, results="hide", warning=FALSE, message=FALSE}
+ctrl = makeTuneControlGrid(resolution = 3)
+rdesc = makeResampleDesc("CV", iters = 2)
+tune.cforest = tuneParams(regr.lrn, task = regr.task, resampling = rdesc, par.set = ps, control = ctrl)
+```
+```{r finetuning_hyperparameters_plot}
+plotHyperParsEffect(generateHyperParsEffectData(tune.cforest), x = "ntree", y = "mtry", z = "mse.test.mean",
+  plot.type = "heatmap")
+
+tune.cforest$x
+```
+<br />
+We find (a kind of) the best performing hyperparameters. Yet, as we see, not always we find the single best combination, and testing too large parameter combinations take time really much. Our dataset is very small, so this can be readily done, but sometimes it is really hard to tune an algorithm.  
+An important thing is to find a minimally satisfactory performance set.  
+In case of random forest, there are many packages having function of random forest, but the package "ranger" is the fastest one in R. FYI.  
+<br />
+```{r finetuning_hyperparameters_bestmodel}
+regr.lrn.best = setHyperPars(makeLearner("regr.cforest"), ntree = tune.cforest$x$ntree, mtry = tune.cforest$x$mtry)
+regr.mod.best = train(regr.lrn.best, regr.task, subset = train.set)
+```
+<br />
+
+-----
+
+####2.3. Interpreting the results (variable importance and partial dependence plots)  
+
+OK, (let's say) we tuned the model(or, we confirmed the performance seems good enough with the given parameter set).  
+**Variable importance**
+What we do next is to interpret the model. Opening the black-box. Firstly, we evaluate which predictors are the important ones for predicting the response variable. Variable importance measure (VIMP) is estimated for each predictor. Note that there are several algorithms proposed to estimate VIMP. Sometimes, selecting an appropriate one is required.
+
+```{r vimp}
+vimp = unlist(getFeatureImportance(regr.mod.best)$res)
+barplot(vimp)
+```
+Now we see that only a few variables strongly contributes to the model. x1, x4, x7, x8, x9. It is a sort of effect size in statistics. It typically expresses how much each predictor contributes to model performance.  
+Why do some have a negative important score? It means that these predictors are just **noisy** variables and if further fine-tuning is preferred, they should be omitted. This is related to **feature selection**, but this is not covered in this workshop.
+<br />
+
+**Partial dependence plots**
+Then, we want to see HOW each predictor is associated with the response variable: positively or negatively. In addition, we may want to see if there is a nonlinear pattern and threshold value. We use a popular one, **partial dependence plots**.
+```{r pdp}
+pdp.all = generatePartialDependenceData(regr.mod.best, regr.task, individual = F)
+plotPartialDependence(pdp.all)
+```
+<br />
+We can observe that x7 has a unimodal pattern, x8 & x9 show a threshold nonlinear pattern.  
+Note that categorial variables (e.g. x1-x5) are plotted with points connected with a line, but ideally, they are better expressed as barplots (no function embedded to mlr).  
+<br />
+
+... If we want to check more (e.g. variable interaction), it is really worth reading the book, [interpretable Machine Learning](https://christophm.github.io/interpretable-ml-book/)
+<br />
+<br />
+<br />
+<br />
+<br />
+<br />
+
+------
+
+## 3. Introduction to decision tree algorithms
+#### In this seciton, we learn some decision tree algorithms.  
+    
++ CART (Breiman's decision tree)
++ conditional inference tree (Hothorn's decision tree)
+
+**We do not use mlr hereafter.** Even though mlr is useful generalization, many packages are well specialized for some particular algorithms and they do have far more enhanced functions.  
+
+### 3.1. CART  
+
+##### CART (classification and regression tree)  
+
+CART was proposed by Breiman et al. (1984). Although some decision tree algorithms had already been proposed earlier than their work, their work made tree algorithms useful. The key finding was so-called "pruning" method, which takes the balance between complexity and accuracy.
+<br />
+
+**Formula**
+Here make a regression formula, y1 is regressed by the set of predictors x1-x16.  
+for the formula it uses "+" among predictors but it does not mean they are additive.
+
+```{r formula }
+# creating formula
+formula.1 = as.formula(paste("y1", paste(colnames(df)[2:length(colnames(df))], collapse=" + "), sep=" ~ ")) 
+print(formula.1)
+```
+
+
+**Modeling**
+For regression use **method="anova"**; for classification, use **method="class"**
+
+```{r cart}
+# regression
+cart.1 = rpart(formula.1, data=df, method="anova",control=rpart.control(minsplit=10, cp=0.001)) 
+```
+
+
+**Option**  | **Description**
+------------|-------------------------------
+__method__  |
+    class  	| method for a classification tree  
+    anova   | method for a regression tree
+__control__ |
+  minsplit  |	minimum number of observations in a node before attempting a split 
+  cp        | cost complexity factor. a split must decrease the overall lack of fit by a factor of cp before being attempted.  
+
+
+**Hyperparameter**
+Remember that you can change hyperparameters!  
+Let's check how cp affects model performance.  
+<br />
+
+Firstly, CART algorithm splits data as much as possible, unless minsplit is met.
+At the top, x7 at the value of 8.2 was selected to split the dataset into two. Each of the circles (**terminal node**) represents an expected value of the response variable, conditioned by a set of predictors and their threshold values. 
+
+```{r cart_plot}
+prp(cart.1) # plot with rpart.plot package
+```
+
+**Overfitting**
+Yet, the tree is unnecessary complex and overfits to the data. So, we want to simplify the tree structure by pruning (cutting) some (too detailed) brunches, while keeping model performance. Cross-validation is the key to find how much we can prune the tree.
+
+```{r cart_cv}
+rsq.rpart(cart.1)	#plot approximate R-squared and relative error for different splits (2 plots). labels are only appropriate for the "anova" method.
+cp.best = cart.1$cptable[which(cart.1$cptable[,"xerror"]==min(cart.1$cptable[,"xerror"])),"CP"]
+```
+
+
+
+Now, we found **cp=`r cp.best`** the best for balancing complexity and accuracy (note that the performance even improved by reducing overfitting!). Let's compare the best and original tree structures.
+```{r cart_best}
+# regression (y1) and classification (y2)
+cart.1.best = rpart(formula.1, data=df, method="anova",control=rpart.control(minsplit=10, cp=cp.best)) 
+
+par(mfrow=c(1,2))
+prp(cart.1.best)
+prp(cart.1)
+```
+You can also play with changing minsplit. This is another hyperparameter.
+<br />
+<br />
+
+### 3.2. Conditional inference tree
+
+Conditional inference tree is another tree-based algorithm developed relatively recently by Hothorn et al. (2006). They found that, if the data must be split more or not can be determined based on statistical significance, and by doing so the structure of a tree can be much simplified while the performance does not significantly reduce from the model selected based on CART CV-technique.  
+We use **party** package:
+
+```{r ctree}
+ctree.1 = ctree(formula.1, df, control = ctree_control(testtype = "Bonferroni", mincriterion = 0.95, minsplit = 10, minbucket = 7))
+plot(ctree.1)
+```
+
+If testtype is "Univariate", p-value correction is not peformed, so more predictors can appear. If implementing correction or not is always difficult, as it is a trade-off of Type 1 & 2 error.
+```{r ctree_p-value}
+ctree.2 = ctree(formula.1, df, control = ctree_control(testtype = "Univariate", mincriterion = 0.95, minsplit = 10, minbucket = 7))
+plot(ctree.2)
+```
+
+<br />
+<br />
+<br />
+<br />
+
+------
+
+## 4. Concluding Remarks  
+
+Well done, that's it!! Through this workshop, we have learned the overview of ML workflow as well as some specific (my favorite) decision tree algorithms. I have to admit that this course did not cover many other important algorithms such as k-NN, artificial neural net, support vector machine, deep learning...  
+Nevertheless, I believe that we now have a good intuition what ML is.  
+Hope many of you will continue learning ML. There are plenty of useful Youtube videos available, as well as free e-books, so you should be able to deepen your knowledge further!!
+
+
+<br />
+<br />
+by Masahiro Ryo
